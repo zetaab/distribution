@@ -60,11 +60,6 @@ func MarkAndSweep(ctx context.Context, storageDriver driver.StorageDriver, regis
 					return fmt.Errorf("failed to retrieve tags for digest %v: %v", dgst, err)
 				}
 				if len(tags) == 0 {
-					_, err := pathFor(manifestRevisionPathSpec{name: repoName, revision: dgst})
-					if err != nil {
-						return err
-					}
-
 					emit("manifest eligible for deletion: %s", dgst)
 					if !opts.DryRun {
 						allTags, err := repository.Tags(ctx).All(ctx)
