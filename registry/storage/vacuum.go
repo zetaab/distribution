@@ -79,7 +79,6 @@ func (v Vacuum) RemoveManifest(name string, dgst digest.Digest, tags []string) e
 	if err != nil {
 		return err
 	}
-
 	context.GetLogger(v.ctx).Infof("deleting manifest: %s", manifestPath)
 	return v.driver.Delete(v.ctx, manifestPath)
 }

@@ -20,6 +20,13 @@ type GCOpts struct {
 	RemoveUntagged bool
 }
 
+// ManifestDel contains manifest structure which will be deleted
+type ManifestDel struct {
+	Name   string
+	Digest digest.Digest
+	Tags   []string
+}
+
 // MarkAndSweep performs a mark and sweep of registry data
 func MarkAndSweep(ctx context.Context, storageDriver driver.StorageDriver, registry distribution.Namespace, opts GCOpts) error {
 	repositoryEnumerator, ok := registry.(distribution.RepositoryEnumerator)
@@ -29,7 +36,7 @@ func MarkAndSweep(ctx context.Context, storageDriver driver.StorageDriver, regis
 
 	// mark
 	markSet := make(map[digest.Digest]struct{})
-	vacuum := NewVacuum(ctx, storageDriver)
+	manifestArr := make([]ManifestDel, 0)
 	err := repositoryEnumerator.Enumerate(ctx, func(repoName string) error {
 		emit(repoName)
 
@@ -61,16 +68,11 @@ func MarkAndSweep(ctx context.Context, storageDriver driver.StorageDriver, regis
 				}
 				if len(tags) == 0 {
 					emit("manifest eligible for deletion: %s", dgst)
-					if !opts.DryRun {
-						allTags, err := repository.Tags(ctx).All(ctx)
-						if err != nil {
-							return fmt.Errorf("failed to retrieve tags %v", err)
-						}
-						err = vacuum.RemoveManifest(repoName, dgst, allTags)
-						if err != nil {
-							return fmt.Errorf("failed to delete manifest %s: %v", dgst, err)
-						}
+					allTags, err := repository.Tags(ctx).All(ctx)
+					if err != nil {
+						return fmt.Errorf("failed to retrieve tags %v", err)
 					}
+					manifestArr = append(manifestArr, ManifestDel{Name: repoName, Digest: dgst, Tags: allTags})
 					return nil
 				}
 			}
@@ -111,6 +113,15 @@ func MarkAndSweep(ctx context.Context, storageDriver driver.StorageDriver, regis
 	}
 
 	// sweep
+	vacuum := NewVacuum(ctx, storageDriver)
+	if !opts.DryRun {
+		for _, obj := range manifestArr {
+			err = vacuum.RemoveManifest(obj.Name, obj.Digest, obj.Tags)
+			if err != nil {
+				return fmt.Errorf("failed to delete manifest %s: %v", obj.Digest, err)
+			}
+		}
+	}
 	blobService := registry.Blobs()
 	deleteSet := make(map[digest.Digest]struct{})
 	err = blobService.Enumerate(ctx, func(dgst digest.Digest) error {
@@ -123,7 +134,7 @@ func MarkAndSweep(ctx context.Context, storageDriver driver.StorageDriver, regis
 	if err != nil {
 		return fmt.Errorf("error enumerating blobs: %v", err)
 	}
-	emit("\n%d blobs marked, %d blobs eligible for deletion", len(markSet), len(deleteSet))
+	emit("\n%d blobs marked, %d blobs and %d manifests eligible for deletion", len(markSet), len(deleteSet), len(manifestArr))
 	for dgst := range deleteSet {
 		emit("blob eligible for deletion: %s", dgst)
 		if opts.DryRun {
