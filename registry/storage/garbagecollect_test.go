@@ -200,6 +200,30 @@ func TestNoDeletionNoEffect(t *testing.T) {
 	}
 }
 
+func UploadManifestWithTag(t *testing.T, repo distribution.Repository, manifestService distribution.ManifestService, name string, tag string) {
+	ctx := context.Background()
+	randomLayers, err := testutil.CreateRandomLayers(3)
+	if err != nil {
+		t.Fatalf("failed to make layers: %v", err)
+	}
+
+	err = testutil.UploadBlobs(repo, randomLayers)
+	if err != nil {
+		t.Fatalf("failed to upload layers: %v", err)
+	}
+
+	manifest, err := testutil.MakeSchema1ManifestWithName(getKeys(randomLayers), name)
+	if err != nil {
+		t.Fatalf("failed to make manifest: %v", err)
+	}
+
+	dgst, err := manifestService.Put(ctx, manifest)
+	if err != nil {
+		t.Fatalf("manifest upload failed: %v", err)
+	}
+	repo.Tags(ctx).Tag(ctx, tag, distribution.Descriptor{Digest: dgst})
+}
+
 func TestDeleteManifestIfTagNotFound(t *testing.T) {
 	ctx := context.Background()
 	inmemoryDriver := inmemory.New()
@@ -208,54 +232,28 @@ func TestDeleteManifestIfTagNotFound(t *testing.T) {
 	repo := makeRepository(t, registry, "deletemanifests")
 	manifestService, err := repo.Manifests(ctx)
 
-	// Create random layers
-	randomLayers1, err := testutil.CreateRandomLayers(3)
-	if err != nil {
-		t.Fatalf("failed to make layers: %v", err)
-	}
-
-	randomLayers2, err := testutil.CreateRandomLayers(3)
-	if err != nil {
-		t.Fatalf("failed to make layers: %v", err)
-	}
-
-	// Upload all layers
-	err = testutil.UploadBlobs(repo, randomLayers1)
-	if err != nil {
-		t.Fatalf("failed to upload layers: %v", err)
-	}
-
-	err = testutil.UploadBlobs(repo, randomLayers2)
-	if err != nil {
-		t.Fatalf("failed to upload layers: %v", err)
-	}
-
-	// Construct manifests
-	manifest1, err := testutil.MakeSchema1Manifest(getKeys(randomLayers1))
-	if err != nil {
-		t.Fatalf("failed to make manifest: %v", err)
-	}
-
-	manifest2, err := testutil.MakeSchema1Manifest(getKeys(randomLayers2))
-	if err != nil {
-		t.Fatalf("failed to make manifest: %v", err)
-	}
-
-	_, err = manifestService.Put(ctx, manifest1)
-	if err != nil {
-		t.Fatalf("manifest upload failed: %v", err)
-	}
-
-	_, err = manifestService.Put(ctx, manifest2)
-	if err != nil {
-		t.Fatalf("manifest upload failed: %v", err)
-	}
-
-	manifestEnumerator, _ := manifestService.(distribution.ManifestEnumerator)
-	err = manifestEnumerator.Enumerate(ctx, func(dgst digest.Digest) error {
-		repo.Tags(ctx).Tag(ctx, "test", distribution.Descriptor{Digest: dgst})
-		return nil
-	})
+	UploadManifestWithTag(t, repo, manifestService, "foo/test", "test")
+	UploadManifestWithTag(t, repo, manifestService, "foo/test", "test")
+	UploadManifestWithTag(t, repo, manifestService, "test2", "test2")
+	UploadManifestWithTag(t, repo, manifestService, "test3", "test3")
+	UploadManifestWithTag(t, repo, manifestService, "foo/bar/test4", "test4")
+	UploadManifestWithTag(t, repo, manifestService, "foo/bar/test4", "test4")
+	UploadManifestWithTag(t, repo, manifestService, "foo/test4", "test4")
+	UploadManifestWithTag(t, repo, manifestService, "foo/test4", "test4")
+	UploadManifestWithTag(t, repo, manifestService, "foo/test4", "test4")
+	UploadManifestWithTag(t, repo, manifestService, "foo/bar/test4", "test4")
+	UploadManifestWithTag(t, repo, manifestService, "foo/bor/test4", "test4")
+	UploadManifestWithTag(t, repo, manifestService, "faa/test4", "test4")
+	UploadManifestWithTag(t, repo, manifestService, "faa/test4", "test4")
+	UploadManifestWithTag(t, repo, manifestService, "foo/bor/test4", "test4")
+	UploadManifestWithTag(t, repo, manifestService, "test4", "test4")
+	UploadManifestWithTag(t, repo, manifestService, "foo/test4", "test4")
+	UploadManifestWithTag(t, repo, manifestService, "test6", "test6")
+	UploadManifestWithTag(t, repo, manifestService, "test4", "test4")
+	UploadManifestWithTag(t, repo, manifestService, "foo/test4", "test4")
+	UploadManifestWithTag(t, repo, manifestService, "test7", "test7")
+	UploadManifestWithTag(t, repo, manifestService, "test8", "test8")
+	UploadManifestWithTag(t, repo, manifestService, "test4", "test4")
 
 	before1 := allBlobs(t, registry)
 	before2 := allManifests(t, manifestService)
@@ -293,6 +291,37 @@ func TestDeleteManifestIfTagNotFound(t *testing.T) {
 	}
 	if len(before2) == len(after2) {
 		t.Fatalf("Garbage collection affected manifest storage: %d == %d", len(before2), len(after2))
+	}
+
+	// loop blobs and check does the manifest digest blob exist
+	blobService := registry.Blobs()
+	blobSet := make(map[digest.Digest]struct{})
+	err = blobService.Enumerate(ctx, func(dgst digest.Digest) error {
+		blobSet[dgst] = struct{}{}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("blobservice Enumerator error: %v", err)
+	}
+
+	manifestEnumerator, _ := manifestService.(distribution.ManifestEnumerator)
+	err = manifestEnumerator.Enumerate(ctx, func(dgst digest.Digest) error {
+		tags, err := repo.Tags(ctx).Lookup(ctx, distribution.Descriptor{Digest: dgst})
+		if err != nil {
+			t.Fatalf("failed to retrieve tags for digest %v: %v", dgst, err)
+		}
+		if len(tags) == 0 {
+			t.Fatalf("No manifests should exist anymore without tag")
+			return nil
+		}
+		// if manifest digest does not exist in blobset
+		if _, ok := blobSet[dgst]; !ok {
+			t.Fatalf("manifest blob does not exist anymore")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("manifest Enumerator error: %v", err)
 	}
 }
 

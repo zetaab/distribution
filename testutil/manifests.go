@@ -68,6 +68,35 @@ func MakeSchema1Manifest(digests []digest.Digest) (distribution.Manifest, error)
 	return signedManifest, nil
 }
 
+// MakeSchema1ManifestWithName constructs a schema 1 manifest from a given list of digests and returns
+// the digest of the manifest
+func MakeSchema1ManifestWithName(digests []digest.Digest, name string) (distribution.Manifest, error) {
+	manifest := schema1.Manifest{
+		Versioned: manifest.Versioned{
+			SchemaVersion: 1,
+		},
+		Name: name,
+		Tag:  "cares",
+	}
+
+	for _, digest := range digests {
+		manifest.FSLayers = append(manifest.FSLayers, schema1.FSLayer{BlobSum: digest})
+		manifest.History = append(manifest.History, schema1.History{V1Compatibility: ""})
+	}
+
+	pk, err := libtrust.GenerateECP256PrivateKey()
+	if err != nil {
+		return nil, fmt.Errorf("unexpected error generating private key: %v", err)
+	}
+
+	signedManifest, err := schema1.Sign(&manifest, pk)
+	if err != nil {
+		return nil, fmt.Errorf("error signing manifest: %v", err)
+	}
+
+	return signedManifest, nil
+}
+
 // MakeSchema2Manifest constructs a schema 2 manifest from a given list of digests and returns
 // the digest of the manifest
 func MakeSchema2Manifest(repository distribution.Repository, digests []digest.Digest) (distribution.Manifest, error) {
